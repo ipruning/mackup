@@ -36,6 +36,52 @@ def _path_kind(file_path: Path) -> str | None:
     return None
 
 
+def _difference(
+    application: str,
+    reference: Path,
+    live: Path,
+    kind: str,
+    path_kinds: tuple[str | None, str | None],
+) -> list[Drift]:
+    return [
+        Drift(
+            application,
+            str(reference),
+            str(live),
+            kind,
+            path_kinds[0],
+            path_kinds[1],
+        ),
+    ]
+
+
+def _compare_files(application: str, reference: Path, live: Path) -> list[Drift]:
+    if reference.read_bytes() == live.read_bytes():
+        return []
+    return _difference(application, reference, live, "modified", ("file", "file"))
+
+
+def _compare_directories(
+    application: str,
+    reference: Path,
+    live: Path,
+) -> list[Drift]:
+    changes: list[Drift] = []
+    names = sorted(
+        {child.name for child in reference.iterdir()}
+        | {child.name for child in live.iterdir()},
+    )
+    for name in names:
+        changes.extend(compare_paths(application, reference / name, live / name))
+    return changes
+
+
+def _compare_links(application: str, reference: Path, live: Path) -> list[Drift]:
+    if reference.readlink() == live.readlink():
+        return []
+    return _difference(application, reference, live, "modified", ("link", "link"))
+
+
 def _compare_paths(application: str, reference: Path, live: Path) -> list[Drift]:
     """Compare one configured reference path with its live counterpart."""
     reference_kind = _path_kind(reference)
@@ -51,51 +97,19 @@ def _compare_paths(application: str, reference: Path, live: Path) -> list[Drift]
     else:
         kind = ""
     if kind:
-        return [
-            Drift(
-                application,
-                str(reference),
-                str(live),
-                kind,
-                reference_kind,
-                live_kind,
-            ),
-        ]
-    if reference_kind == "file" and live_kind == "file":
-        if reference.read_bytes() == live.read_bytes():
-            return []
-        return [
-            Drift(
-                application,
-                str(reference),
-                str(live),
-                "modified",
-                reference_kind,
-                live_kind,
-            ),
-        ]
-    if reference_kind == "directory" and live_kind == "directory":
-        changes: list[Drift] = []
-        names = sorted(
-            {child.name for child in reference.iterdir()}
-            | {child.name for child in live.iterdir()},
+        return _difference(
+            application,
+            reference,
+            live,
+            kind,
+            (reference_kind, live_kind),
         )
-        for name in names:
-            changes.extend(compare_paths(application, reference / name, live / name))
-        return changes
+    if reference_kind == "file" and live_kind == "file":
+        return _compare_files(application, reference, live)
+    if reference_kind == "directory" and live_kind == "directory":
+        return _compare_directories(application, reference, live)
     if reference_kind == "link" and live_kind == "link":
-        if reference.readlink() == live.readlink():
-            return []
-        return [
-            Drift(
-                application,
-                str(reference),
-                str(live),
-                "modified",
-                reference_kind,
-                live_kind,
-            ),
-        ]
+        return _compare_links(application, reference, live)
     return []
 
 
@@ -140,9 +154,7 @@ def render_drift(changes: list[Drift]) -> None:
         if change.error:
             print(f"  error: {change.error}")
     summary = Counter(change.kind for change in changes)
-    rendered = ", ".join(
-        f"{count} {kind}" for kind, count in sorted(summary.items())
-    )
+    rendered = ", ".join(f"{count} {kind}" for kind, count in sorted(summary.items()))
     print(f"Summary: {rendered or 'no drift'}")
 
 

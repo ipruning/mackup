@@ -88,7 +88,8 @@ class ApplicationsDatabase:
         """
         # Configure the config parser
         apps_dir: str = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), APPS_DIR,
+            os.path.dirname(os.path.realpath(__file__)),
+            APPS_DIR,
         )
 
         # List of stock application config files
@@ -101,13 +102,16 @@ class ApplicationsDatabase:
             custom_dirs = [applications_dir]
         else:
             legacy_custom_apps_dir = os.path.join(
-                os.environ["HOME"], CUSTOM_APPS_DIR,
+                os.environ["HOME"],
+                CUSTOM_APPS_DIR,
             )
             xdg_config_home = os.environ.get(
-                "XDG_CONFIG_HOME", os.path.join(os.environ["HOME"], ".config"),
+                "XDG_CONFIG_HOME",
+                os.path.join(os.environ["HOME"], ".config"),
             )
             xdg_custom_apps_dir = os.path.join(
-                xdg_config_home, CUSTOM_APPS_DIR_XDG,
+                xdg_config_home,
+                CUSTOM_APPS_DIR_XDG,
             )
             custom_dirs = [legacy_custom_apps_dir, xdg_custom_apps_dir]
 

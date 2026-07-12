@@ -7,21 +7,11 @@ Usage:
   mackup [options] list
   mackup [options] show <application>
   mackup [options] diff [<application>]
-  mackup [options] backup [<application>]
-  mackup [options] restore [<application>]
-  mackup [options] link install [<application>]
-  mackup [options] link uninstall [<application>]
-  mackup [options] link [<application>]
   mackup (-h | --help)
 
 Options:
   -h --help                 Show this screen.
-  -f --force                Force every question asked to be answered with "Yes".
-  --force-no                Force every question asked to be answered with "No".
-  -r --root                 Allow mackup to be run as superuser.
-  -n --dry-run              Show steps without executing.
   --json                    Emit a machine-readable inspection report.
-  -v --verbose              Show additional details.
   -c --config-file=<path>   Specify custom config file path.
   --applications-dir=<path> Load custom application files from this directory.
   --version                 Show version.
@@ -30,16 +20,9 @@ Modes of action:
  - mackup list: display a list of all supported applications.
  - mackup show: display the details for a supported application.
  - mackup diff: report location-only differences without changing files.
- - mackup backup: copy local config files in the configured remote folder.
- - mackup restore: copy config files from the configured remote folder locally.
- - mackup link install: moves local config files in remote folder, and links.
- - mackup link uninstall: removes the links and copy config files locally.
- - mackup link: links local config files from the remote folder.
 
-backup, restore, link install, link uninstall and link act on every configured
-application by default. Name a single application (e.g. `mackup backup vim`) to
-limit a command to that app, overriding the applications_to_sync and
-applications_to_ignore settings in your config.
+diff inspects every configured application by default. Name one application to
+limit the report without changing the configured application set.
 
 By default, Mackup syncs all application data via
 Dropbox, but may be configured to exclude applications or use a different
@@ -53,7 +36,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from docopt import docopt
+from docopt import DocoptExit, docopt
 
 from . import utils
 from .application import ApplicationProfile
@@ -67,6 +50,8 @@ from .restore_plan import (
     render_restore_plan_json,
     restore_plan_has_blockers,
 )
+
+USAGE_ERROR = 2
 
 
 class ColorFormatCodes:
@@ -120,7 +105,10 @@ def _run_action(ctx: _Context, app_names: set[str], action: str) -> None:
     """Run an ApplicationProfile method over each app, in sorted order."""
     for app_name in sorted(app_names):
         app = ApplicationProfile(
-            ctx.mckp, ctx.app_db.get_files(app_name), ctx.dry_run, ctx.verbose,
+            ctx.mckp,
+            ctx.app_db.get_files(app_name),
+            ctx.dry_run,
+            ctx.verbose,
         )
         _print_app_header(app_name, ctx.verbose)
         getattr(app, action)()
@@ -251,7 +239,10 @@ def _cmd_link_uninstall(args: dict[str, Any], ctx: _Context) -> None:
         # Restore the Mackup config before any other config, as we might
         # need it to know about custom settings
         mackup_app = ApplicationProfile(
-            ctx.mckp, ctx.app_db.get_files(MACKUP_APP_NAME), ctx.dry_run, ctx.verbose,
+            ctx.mckp,
+            ctx.app_db.get_files(MACKUP_APP_NAME),
+            ctx.dry_run,
+            ctx.verbose,
         )
         mackup_app.link_uninstall()
 
@@ -287,7 +278,10 @@ def _cmd_link(args: dict[str, Any], ctx: _Context) -> None:
     # Restore the Mackup config before any other config, as we might
     # need it to know about custom settings
     mackup_app = ApplicationProfile(
-        ctx.mckp, ctx.app_db.get_files(MACKUP_APP_NAME), ctx.dry_run, ctx.verbose,
+        ctx.mckp,
+        ctx.app_db.get_files(MACKUP_APP_NAME),
+        ctx.dry_run,
+        ctx.verbose,
     )
     _print_app_header(MACKUP_APP_NAME, ctx.verbose)
     mackup_app.link()
@@ -317,35 +311,23 @@ def main() -> None:
         )
     assert docstring is not None  # for type narrowing after sys.exit
 
-    args: dict[str, Any] = docopt(docstring, version=f"Mackup {VERSION}")
+    try:
+        args: dict[str, Any] = docopt(docstring, version=f"Mackup {VERSION}")
+    except DocoptExit as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(USAGE_ERROR) from error
 
-    if args["--force"] and args["--force-no"]:
-        sys.exit("Options --force and --force-no are mutually exclusive.")
-    if args["--json"] and not (
-        args["diff"] or (args["--dry-run"] and args["restore"])
-    ):
-        sys.exit("Option --json requires diff or --dry-run restore.")
+    if args["--json"] and not args["diff"]:
+        sys.exit("Option --json requires diff.")
 
     config_file: str | None = args.get("--config-file")
     ctx = _Context(
         config_file=config_file,
         mckp=Mackup(config_file),
         app_db=ApplicationsDatabase(args["--applications-dir"]),
-        dry_run=args["--dry-run"],
-        verbose=args["--verbose"],
+        dry_run=True,
+        verbose=False,
     )
-
-    # If we want to answer mackup with "yes" for each question
-    if args["--force"]:
-        utils.FORCE_YES = True
-
-    # If we want to answer mackup with "no" for each question
-    if args["--force-no"]:
-        utils.FORCE_NO = True
-
-    # Allow mackup to be run as root
-    if args["--root"]:
-        utils.CAN_RUN_AS_ROOT = True
 
     if args["list"]:
         ctx.mckp.check_for_usable_environment()
@@ -355,13 +337,3 @@ def main() -> None:
         _cmd_show(args, ctx.app_db)
     elif args["diff"]:
         _cmd_diff(args, ctx)
-    elif args["backup"]:
-        _cmd_backup(args, ctx)
-    elif args["restore"]:
-        _cmd_restore(args, ctx)
-    elif args["link"] and args["install"]:
-        _cmd_link_install(args, ctx)
-    elif args["link"] and args["uninstall"]:
-        _cmd_link_uninstall(args, ctx)
-    elif args["link"]:
-        _cmd_link(args, ctx)

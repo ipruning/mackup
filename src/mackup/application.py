@@ -18,7 +18,11 @@ class ApplicationProfile:
     """Instantiate this class with application specific data."""
 
     def __init__(
-        self, mackup: Mackup, files: set[str], dry_run: bool, verbose: bool,
+        self,
+        mackup: Mackup,
+        files: set[str],
+        dry_run: bool,
+        verbose: bool,
     ) -> None:
         """
         Create an ApplicationProfile instance.
@@ -98,7 +102,7 @@ class ApplicationProfile:
             (home_filepath, mackup_filepath) = self.get_filepaths(filename)
 
             # If config_file exists and is a real file/folder
-            if (os.path.isfile(home_filepath) or os.path.isdir(home_filepath)):
+            if os.path.isfile(home_filepath) or os.path.isdir(home_filepath):
                 # Check if home file is a symlink pointing to mackup file
                 # (already backed up via link install)
                 if (
@@ -172,7 +176,7 @@ class ApplicationProfile:
             (home_filepath, mackup_filepath) = self.get_filepaths(filename)
 
             # If config_file exists in mackup and is a real file/folder
-            if (os.path.isfile(mackup_filepath) or os.path.isdir(mackup_filepath)):
+            if os.path.isfile(mackup_filepath) or os.path.isdir(mackup_filepath):
                 if self.verbose:
                     print(
                         f"Recovering\n  {mackup_filepath}\n  to\n  {home_filepath} ...",
@@ -399,7 +403,8 @@ class ApplicationProfile:
                     # If the home file is not a link or does not point to the
                     # mackup file, display a warning and skip it.
                     if not os.path.islink(home_filepath) or not os.path.samefile(
-                        home_filepath, mackup_filepath,
+                        home_filepath,
+                        mackup_filepath,
                     ):
                         print(
                             f'Warning: the file in your home "{home_filepath}" '
