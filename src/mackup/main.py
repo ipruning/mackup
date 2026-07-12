@@ -32,6 +32,7 @@ See https://github.com/lra/mackup/tree/master/doc for more information.
 
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, NoReturn
 
 from docopt import DocoptExit, docopt
@@ -138,10 +139,16 @@ def main() -> None:
     if args["--json"] and not args["diff"]:
         _usage_error("Option --json requires diff.")
 
+    applications_dir: str | None = args["--applications-dir"]
+    if applications_dir and not Path(applications_dir).is_dir():
+        _usage_error(
+            f"Applications directory is not a directory: {applications_dir}",
+        )
+
     config_file: str | None = args.get("--config-file")
     ctx = _Context(
         mckp=Mackup(config_file),
-        app_db=ApplicationsDatabase(args["--applications-dir"]),
+        app_db=ApplicationsDatabase(applications_dir),
     )
 
     if args["list"]:

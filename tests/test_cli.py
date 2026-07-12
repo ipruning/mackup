@@ -122,6 +122,32 @@ def test_unknown_application_is_a_usage_error(tmp_path: Path, monkeypatch) -> No
     assert context.value.code == USAGE_ERROR
 
 
+def test_explicit_applications_directory_must_exist(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home, _reference, applications = _fixture(tmp_path, monkeypatch)
+    applications.joinpath("test-app.cfg").unlink()
+    applications.rmdir()
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        "diff",
+    ]
+
+    with patch("sys.argv", argv), pytest.raises(SystemExit) as context:
+        main()
+
+    assert context.value.code == USAGE_ERROR
+    assert capsys.readouterr().err == (
+        f"Applications directory is not a directory: {applications}\n"
+    )
+
+
 def test_unreadable_path_is_json_error_and_exit_one(
     tmp_path: Path,
     monkeypatch,
