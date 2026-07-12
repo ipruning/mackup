@@ -55,7 +55,11 @@ def test_diff_reports_location_only_json_without_mutating_files(
         "diff",
     ]
 
-    with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+    with (
+        patch("sys.argv", argv),
+        patch("mackup.mackup.os.geteuid", return_value=0),
+        contextlib.redirect_stdout(output),
+    ):
         main()
 
     document = json.loads(output.getvalue())
@@ -68,11 +72,90 @@ def test_diff_reports_location_only_json_without_mutating_files(
     assert reference_file.read_text() == "token=reference-secret\n"
 
 
-def test_backup_is_not_a_public_command(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["backup"],
+        ["restore"],
+        ["link"],
+        ["link", "install"],
+        ["link", "uninstall"],
+    ],
+)
+def test_mutation_is_not_a_public_command(
+    monkeypatch,
+    command: list[str],
+) -> None:
     monkeypatch.setenv("HOME", os.fspath(Path.home()))
     with (
-        patch("sys.argv", ["mackup", "backup"]),
+        patch("sys.argv", ["mackup", *command]),
         pytest.raises(SystemExit) as context,
     ):
         main()
     assert context.value.code == USAGE_ERROR
+
+
+def test_json_requires_diff(monkeypatch) -> None:
+    monkeypatch.setenv("HOME", os.fspath(Path.home()))
+    with (
+        patch("sys.argv", ["mackup", "--json", "list"]),
+        pytest.raises(SystemExit) as context,
+    ):
+        main()
+    assert context.value.code == USAGE_ERROR
+
+
+def test_unknown_application_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    home, _reference, applications = _fixture(tmp_path, monkeypatch)
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        "diff",
+        "unknown",
+    ]
+    with patch("sys.argv", argv), pytest.raises(SystemExit) as context:
+        main()
+    assert context.value.code == USAGE_ERROR
+
+
+def test_unreadable_path_is_json_error_and_exit_one(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home, reference, applications = _fixture(tmp_path, monkeypatch)
+    live_file = home / ".testrc"
+    reference_file = reference / ".testrc"
+    live_file.write_text("live\n")
+    reference_file.write_text("reference\n")
+    original_lstat = Path.lstat
+
+    def deny_live(file_path: Path) -> os.stat_result:
+        if file_path == live_file:
+            raise PermissionError(13, "Permission denied", str(file_path))
+        return original_lstat(file_path)
+
+    output = io.StringIO()
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        "--json",
+        "diff",
+    ]
+    with (
+        patch("sys.argv", argv),
+        patch.object(Path, "lstat", deny_live),
+        contextlib.redirect_stdout(output),
+        pytest.raises(SystemExit) as context,
+    ):
+        main()
+
+    document = json.loads(output.getvalue())
+    assert context.value.code == 1
+    assert document["changes"][0]["kind"] == "unreadable"
+    assert document["changes"][0]["error"] == f"Permission denied: {live_file}"
