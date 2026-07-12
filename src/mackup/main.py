@@ -145,15 +145,13 @@ def main() -> None:
             f"Applications directory is not a directory: {applications_dir}",
         )
 
-    config_file: str | None = args.get("--config-file")
-    ctx = _Context(
-        mckp=Mackup(config_file),
-        app_db=ApplicationsDatabase(applications_dir),
-    )
+    app_db = ApplicationsDatabase(applications_dir)
 
     if args["list"]:
-        _cmd_list(ctx.app_db)
+        _cmd_list(app_db)
     elif args["show"]:
-        _cmd_show(args, ctx.app_db)
+        _cmd_show(args, app_db)
     elif args["diff"]:
+        config_file: str | None = args.get("--config-file")
+        ctx = _Context(mckp=Mackup(config_file), app_db=app_db)
         _cmd_diff(args, ctx)

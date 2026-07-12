@@ -121,10 +121,9 @@ def test_metadata_inspection_commands_run_as_root(
     expected: str,
 ) -> None:
     home, _reference, applications = _fixture(tmp_path, monkeypatch)
+    (home / ".mackup.cfg").unlink()
     argv = [
         "mackup",
-        "--config-file",
-        str(home / ".mackup.cfg"),
         "--applications-dir",
         str(applications),
         *command,
