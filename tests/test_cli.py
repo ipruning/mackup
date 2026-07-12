@@ -25,9 +25,7 @@ def _fixture(tmp_path: Path, monkeypatch) -> tuple[Path, Path, Path]:
         "[storage]\n"
         "engine = file_system\n"
         f"path = {storage}\n"
-        "directory = reference\n"
-        "[applications_to_sync]\n"
-        "test-app\n",
+        "directory = reference\n",
     )
     (applications / "test-app.cfg").write_text(
         "[application]\nname = test-app\n[configuration_files]\n.testrc\n",
@@ -65,7 +63,10 @@ def test_diff_reports_location_only_json_without_mutating_files(
     document = json.loads(output.getvalue())
     assert document["schema_version"] == 1
     assert document["operation"] == "diff"
-    assert document["changes"][0]["kind"] == "modified"
+    test_app_changes = [
+        change for change in document["changes"] if change["application"] == "test-app"
+    ]
+    assert [change["kind"] for change in test_app_changes] == ["modified"]
     assert "live-secret" not in output.getvalue()
     assert "reference-secret" not in output.getvalue()
     assert live_file.read_text() == "token=live-secret\n"
@@ -157,5 +158,8 @@ def test_unreadable_path_is_json_error_and_exit_one(
 
     document = json.loads(output.getvalue())
     assert context.value.code == 1
-    assert document["changes"][0]["kind"] == "unreadable"
-    assert document["changes"][0]["error"] == f"Permission denied: {live_file}"
+    test_app_changes = [
+        change for change in document["changes"] if change["application"] == "test-app"
+    ]
+    assert test_app_changes[0]["kind"] == "unreadable"
+    assert test_app_changes[0]["error"] == f"Permission denied: {live_file}"

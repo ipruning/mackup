@@ -71,7 +71,7 @@ def _resolve_apps(app_name: str | None, ctx: _Context) -> set[str]:
         if app_name not in ctx.app_db.get_app_names():
             _usage_error(f"Unsupported application: {app_name}")
         return {app_name}
-    return ctx.mckp.get_apps_to_backup()
+    return ctx.mckp.get_apps_to_backup(ctx.app_db)
 
 
 def _cmd_list(app_db: ApplicationsDatabase) -> None:

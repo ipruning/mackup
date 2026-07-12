@@ -84,7 +84,10 @@ class Mackup:
             else:
                 utils.error("Mackup can't do anything without a home =(")
 
-    def get_apps_to_backup(self) -> set[str]:
+    def get_apps_to_backup(
+        self,
+        app_db: appsdb.ApplicationsDatabase | None = None,
+    ) -> set[str]:
         """
         Get the list of applications that should be backed up by Mackup.
 
@@ -93,12 +96,14 @@ class Mackup:
         Returns:
             (set) List of application names to back up
         """
-        # Instantiate the app db
-        app_db: appsdb.ApplicationsDatabase = appsdb.ApplicationsDatabase()
+        # Use the caller's database when it includes custom application files.
+        active_app_db = app_db or appsdb.ApplicationsDatabase()
 
         # If a list of apps to sync is specify, we only allow those
         # Or we allow every supported app by default
-        apps_to_backup: set[str] = self._config.apps_to_sync or app_db.get_app_names()
+        apps_to_backup: set[str] = (
+            self._config.apps_to_sync or active_app_db.get_app_names()
+        )
 
         # Remove the specified apps to ignore
         for app_name in self._config.apps_to_ignore:
