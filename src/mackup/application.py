@@ -6,8 +6,10 @@ Mackup. Name, files, ...
 """
 
 import os
+from pathlib import Path
 
 from . import utils
+from .drift import Drift, compare_paths
 from .mackup import Mackup
 from .restore_plan import RestoreChange, compare_restore_path
 
@@ -61,6 +63,20 @@ class ApplicationProfile:
                         home_filepath,
                     ),
                 )
+        return changes
+
+    def drift(self, application: str) -> list[Drift]:
+        """Return location-only differences for every configured path."""
+        changes: list[Drift] = []
+        for filename in self.files:
+            home_filepath, mackup_filepath = self.get_filepaths(filename)
+            changes.extend(
+                compare_paths(
+                    application,
+                    Path(mackup_filepath),
+                    Path(home_filepath),
+                ),
+            )
         return changes
 
     def copy_files_to_mackup_folder(self) -> None:

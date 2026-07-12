@@ -14,12 +14,12 @@ from .constants import APPS_DIR, CUSTOM_APPS_DIR, CUSTOM_APPS_DIR_XDG
 class ApplicationsDatabase:
     """Database containing all the configured applications."""
 
-    def __init__(self) -> None:
+    def __init__(self, applications_dir: str | None = None) -> None:
         """Create a ApplicationsDatabase instance."""
         # Build the dict that will contain the properties of each application
         self.apps: dict[str, dict[str, str | set[str]]] = {}
 
-        for config_file in ApplicationsDatabase.get_config_files():
+        for config_file in ApplicationsDatabase.get_config_files(applications_dir):
             config: configparser.ConfigParser = configparser.ConfigParser(
                 allow_no_value=True,
             )
@@ -71,7 +71,7 @@ class ApplicationsDatabase:
                         config_files.add(xdg_path)
 
     @staticmethod
-    def get_config_files() -> set[str]:
+    def get_config_files(applications_dir: str | None = None) -> set[str]:
         """
         Return the application configuration files.
 
@@ -91,35 +91,33 @@ class ApplicationsDatabase:
             os.path.dirname(os.path.realpath(__file__)), APPS_DIR,
         )
 
-        # Legacy custom apps directory: ~/.mackup/
-        legacy_custom_apps_dir: str = os.path.join(os.environ["HOME"], CUSTOM_APPS_DIR)
-
-        # XDG custom apps directory: $XDG_CONFIG_HOME/mackup/applications/
-        xdg_config_home: str = os.environ.get(
-            "XDG_CONFIG_HOME", os.path.join(os.environ["HOME"], ".config"),
-        )
-        xdg_custom_apps_dir: str = os.path.join(xdg_config_home, CUSTOM_APPS_DIR_XDG)
-
         # List of stock application config files
         config_files: set[str] = set()
 
         # Temp list of user added app config file names
         custom_files: set[str] = set()
 
-        # Get the list of custom application config files from legacy directory first
-        # (legacy takes priority over XDG)
-        if os.path.isdir(legacy_custom_apps_dir):
-            for filename in os.listdir(legacy_custom_apps_dir):
-                if filename.endswith(".cfg"):
-                    config_files.add(os.path.join(legacy_custom_apps_dir, filename))
-                    custom_files.add(filename)
+        if applications_dir is not None:
+            custom_dirs = [applications_dir]
+        else:
+            legacy_custom_apps_dir = os.path.join(
+                os.environ["HOME"], CUSTOM_APPS_DIR,
+            )
+            xdg_config_home = os.environ.get(
+                "XDG_CONFIG_HOME", os.path.join(os.environ["HOME"], ".config"),
+            )
+            xdg_custom_apps_dir = os.path.join(
+                xdg_config_home, CUSTOM_APPS_DIR_XDG,
+            )
+            custom_dirs = [legacy_custom_apps_dir, xdg_custom_apps_dir]
 
-        # Get custom application config files from XDG directory
-        # (only if not already in legacy directory)
-        if os.path.isdir(xdg_custom_apps_dir):
-            for filename in os.listdir(xdg_custom_apps_dir):
+        # Earlier directories take priority over later directories.
+        for custom_dir in custom_dirs:
+            if not os.path.isdir(custom_dir):
+                continue
+            for filename in os.listdir(custom_dir):
                 if filename.endswith(".cfg") and filename not in custom_files:
-                    config_files.add(os.path.join(xdg_custom_apps_dir, filename))
+                    config_files.add(os.path.join(custom_dir, filename))
                     custom_files.add(filename)
 
         # Add the default provided app config files, but only if those are not

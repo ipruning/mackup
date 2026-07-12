@@ -93,6 +93,47 @@ class TestCLI(unittest.TestCase):
         utils.FORCE_NO = False
         utils.CAN_RUN_AS_ROOT = False
 
+    def test_diff_uses_explicit_applications_directory_without_mutating_files(self):
+        """A repo can inspect custom mappings without installing Mackup links."""
+        applications_dir = os.path.join(self.test_storage, "applications")
+        os.makedirs(applications_dir)
+        shutil.move(
+            self.custom_app_config,
+            os.path.join(applications_dir, "test-app.cfg"),
+        )
+        os.rmdir(self.custom_apps_dir)
+        os.makedirs(self.mackup_folder)
+        reference_path = os.path.join(self.mackup_folder, self.test_file_name)
+        with open(reference_path, "w") as file:
+            file.write("test_config=reference-secret\n")
+        with open(self.test_file_path, "w") as file:
+            file.write("test_config=live-secret\n")
+
+        output = io.StringIO()
+        argv = [
+            "mackup",
+            "--config-file",
+            self.config_path,
+            "--applications-dir",
+            applications_dir,
+            "--json",
+            "diff",
+        ]
+        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+            main()
+
+        document = json.loads(output.getvalue())
+        assert document["schema_version"] == 1
+        assert document["operation"] == "diff"
+        assert document["changes"][0]["application"] == self.test_app_name
+        assert document["changes"][0]["kind"] == "modified"
+        assert "reference-secret" not in output.getvalue()
+        assert "live-secret" not in output.getvalue()
+        with open(reference_path) as file:
+            assert file.read() == "test_config=reference-secret\n"
+        with open(self.test_file_path) as file:
+            assert file.read() == "test_config=live-secret\n"
+
     def test_backup_creates_mackup_folder(self):
         """Test that mackup backup creates the Mackup folder if it doesn't exist."""
         # Ensure Mackup folder doesn't exist
@@ -487,7 +528,9 @@ class TestCLI(unittest.TestCase):
             pytest.raises(SystemExit) as context,
         ):
             main()
-        assert str(context.value) == "Option --json requires --dry-run restore."
+        assert str(context.value) == (
+            "Option --json requires diff or --dry-run restore."
+        )
 
     def test_backup_single_named_app(self):
         """mackup backup <app> backs up that application's files."""

@@ -80,6 +80,22 @@ application, add its name (the identifier shown by `mackup list`), e.g.
 `[applications_to_sync]` / `[applications_to_ignore]` settings in your
 `.mackup.cfg`, so you can act on any supported app without editing your config.
 
+`mackup diff [application]`
+
+Inspect differences between the configured Mackup folder and the corresponding
+paths in your home directory without changing either side. The report contains
+locations and file kinds, never file contents:
+
+```bash
+mackup diff
+mackup --json diff
+mackup --applications-dir ./applications --json diff
+```
+
+An explicit applications directory lets a repository use its custom mappings
+without installing `~/.mackup` links. Ordinary drift exits successfully;
+unreadable paths are reported and make the command exit non-zero.
+
 `mackup backup [application]`
 
 Back up your application files. Copy your local config files into the Mackup folder.

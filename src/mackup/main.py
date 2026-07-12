@@ -6,6 +6,7 @@ Copyright (C) 2013-2025 Laurent Raufaste <http://glop.org/>
 Usage:
   mackup [options] list
   mackup [options] show <application>
+  mackup [options] diff [<application>]
   mackup [options] backup [<application>]
   mackup [options] restore [<application>]
   mackup [options] link install [<application>]
@@ -19,14 +20,16 @@ Options:
   --force-no                Force every question asked to be answered with "No".
   -r --root                 Allow mackup to be run as superuser.
   -n --dry-run              Show steps without executing.
-  --json                    Emit a machine-readable restore dry-run plan.
+  --json                    Emit a machine-readable inspection report.
   -v --verbose              Show additional details.
   -c --config-file=<path>   Specify custom config file path.
+  --applications-dir=<path> Load custom application files from this directory.
   --version                 Show version.
 
 Modes of action:
  - mackup list: display a list of all supported applications.
  - mackup show: display the details for a supported application.
+ - mackup diff: report location-only differences without changing files.
  - mackup backup: copy local config files in the configured remote folder.
  - mackup restore: copy config files from the configured remote folder locally.
  - mackup link install: moves local config files in remote folder, and links.
@@ -56,6 +59,7 @@ from . import utils
 from .application import ApplicationProfile
 from .appsdb import ApplicationsDatabase
 from .constants import MACKUP_APP_NAME, VERSION
+from .drift import Drift, drift_has_errors, render_drift, render_drift_json
 from .mackup import Mackup
 from .restore_plan import (
     RestoreChange,
@@ -182,6 +186,27 @@ def _cmd_restore(args: dict[str, Any], ctx: _Context) -> None:
     _run_action(ctx, app_names, "copy_files_from_mackup_folder")
 
 
+def _cmd_diff(args: dict[str, Any], ctx: _Context) -> None:
+    """Inspect configured paths without changing either side."""
+    app_names = _resolve_apps(args["<application>"], ctx)
+    ctx.mckp.check_for_usable_restore_env()
+    changes: list[Drift] = []
+    for app_name in sorted(app_names):
+        app = ApplicationProfile(
+            ctx.mckp,
+            ctx.app_db.get_files(app_name),
+            dry_run=True,
+            verbose=False,
+        )
+        changes.extend(app.drift(app_name))
+    if args["--json"]:
+        render_drift_json(changes)
+    else:
+        render_drift(changes)
+    if drift_has_errors(changes):
+        raise SystemExit(1)
+
+
 def _cmd_link_install(args: dict[str, Any], ctx: _Context) -> None:
     app_names = _resolve_apps(args["<application>"], ctx)
     # Check the env where the command is being run
@@ -296,14 +321,16 @@ def main() -> None:
 
     if args["--force"] and args["--force-no"]:
         sys.exit("Options --force and --force-no are mutually exclusive.")
-    if args["--json"] and not (args["--dry-run"] and args["restore"]):
-        sys.exit("Option --json requires --dry-run restore.")
+    if args["--json"] and not (
+        args["diff"] or (args["--dry-run"] and args["restore"])
+    ):
+        sys.exit("Option --json requires diff or --dry-run restore.")
 
     config_file: str | None = args.get("--config-file")
     ctx = _Context(
         config_file=config_file,
         mckp=Mackup(config_file),
-        app_db=ApplicationsDatabase(),
+        app_db=ApplicationsDatabase(args["--applications-dir"]),
         dry_run=args["--dry-run"],
         verbose=args["--verbose"],
     )
@@ -326,6 +353,8 @@ def main() -> None:
     elif args["show"]:
         ctx.mckp.check_for_usable_environment()
         _cmd_show(args, ctx.app_db)
+    elif args["diff"]:
+        _cmd_diff(args, ctx)
     elif args["backup"]:
         _cmd_backup(args, ctx)
     elif args["restore"]:
