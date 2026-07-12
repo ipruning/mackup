@@ -9,6 +9,7 @@ import os
 
 from . import utils
 from .mackup import Mackup
+from .restore_plan import RestoreChange, compare_restore_path
 
 
 class ApplicationProfile:
@@ -46,6 +47,21 @@ class ApplicationProfile:
             os.path.join(os.environ["HOME"], filename),
             os.path.join(self.mackup.mackup_folder, filename),
         )
+
+    def restore_plan(self, application: str) -> list[RestoreChange]:
+        """Return the pending restore changes for this application."""
+        changes: list[RestoreChange] = []
+        for filename in self.files:
+            home_filepath, mackup_filepath = self.get_filepaths(filename)
+            if os.path.isfile(mackup_filepath) or os.path.isdir(mackup_filepath):
+                changes.append(
+                    compare_restore_path(
+                        application,
+                        mackup_filepath,
+                        home_filepath,
+                    ),
+                )
+        return changes
 
     def copy_files_to_mackup_folder(self) -> None:
         """

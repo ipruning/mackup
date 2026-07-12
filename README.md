@@ -91,6 +91,20 @@ Restore your application settings on a newly installed workstation.
 Copy config files from the Mackup folder to your home folder.
 Name an application to restore only that one, e.g. `mackup restore emacs`.
 
+Preview the complete restore before replacing anything:
+
+```bash
+mackup --dry-run restore
+mackup --dry-run --json restore
+```
+
+The human-readable plan shows created, modified, deleted, unchanged, and
+type-changing targets. Text replacements include unified diffs. Directory
+plans expose local-only entries that restore will delete, while binary
+replacements include their sizes and SHA-256 hashes. Use `--json` when another
+program needs to inspect the plan. A target that cannot be inspected is marked
+as blocked and makes the preview exit with a non-zero status.
+
 `mackup link install [application]`
 
 Move your local config files into the Mackup folder,

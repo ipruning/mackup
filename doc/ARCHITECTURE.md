@@ -311,7 +311,7 @@ Mackup includes several safety mechanisms:
 
 1. **Confirmation prompts**: Asks before destructive operations
 2. **Conflict detection**: Warns if files exist in both locations
-3. **Dry-run capability**: Can preview operations (future enhancement)
+3. **Dry-run capability**: Restore previews classify and diff pending changes
 4. **Graceful degradation**: Continues with other apps if one fails
 5. **Clear error messages**: Helps users understand what went wrong
 
@@ -327,7 +327,7 @@ Mackup includes several safety mechanisms:
 Potential improvements to the architecture:
 
 1. **Progress indicators**: Show progress during long operations
-2. **Dry-run mode**: Preview changes without executing
+2. **Dry-run expansion**: Extend structured change previews beyond restore
 3. **Incremental sync**: Only sync changed files
 4. **Parallel processing**: Speed up operations on multi-app backups
 5. **Conflict resolution**: Better handling of file conflicts

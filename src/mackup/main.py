@@ -19,6 +19,7 @@ Options:
   --force-no                Force every question asked to be answered with "No".
   -r --root                 Allow mackup to be run as superuser.
   -n --dry-run              Show steps without executing.
+  --json                    Emit a machine-readable restore dry-run plan.
   -v --verbose              Show additional details.
   -c --config-file=<path>   Specify custom config file path.
   --version                 Show version.
@@ -56,6 +57,12 @@ from .application import ApplicationProfile
 from .appsdb import ApplicationsDatabase
 from .constants import MACKUP_APP_NAME, VERSION
 from .mackup import Mackup
+from .restore_plan import (
+    RestoreChange,
+    render_restore_plan,
+    render_restore_plan_json,
+    restore_plan_has_blockers,
+)
 
 
 class ColorFormatCodes:
@@ -152,6 +159,24 @@ def _cmd_backup(args: dict[str, Any], ctx: _Context) -> None:
 def _cmd_restore(args: dict[str, Any], ctx: _Context) -> None:
     app_names = _resolve_apps(args["<application>"], ctx)
     ctx.mckp.check_for_usable_restore_env()
+
+    if ctx.dry_run:
+        changes: list[RestoreChange] = []
+        for app_name in sorted(app_names):
+            app = ApplicationProfile(
+                ctx.mckp,
+                ctx.app_db.get_files(app_name),
+                ctx.dry_run,
+                ctx.verbose,
+            )
+            changes.extend(app.restore_plan(app_name))
+        if args["--json"]:
+            render_restore_plan_json(changes)
+        else:
+            render_restore_plan(changes)
+        if restore_plan_has_blockers(changes):
+            raise SystemExit(1)
+        return
 
     # Recover a backup of the files of each application
     _run_action(ctx, app_names, "copy_files_from_mackup_folder")
@@ -271,6 +296,8 @@ def main() -> None:
 
     if args["--force"] and args["--force-no"]:
         sys.exit("Options --force and --force-no are mutually exclusive.")
+    if args["--json"] and not (args["--dry-run"] and args["restore"]):
+        sys.exit("Option --json requires --dry-run restore.")
 
     config_file: str | None = args.get("--config-file")
     ctx = _Context(

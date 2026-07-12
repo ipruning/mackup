@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -151,6 +152,160 @@ class TestCLI(unittest.TestCase):
             restored_content = f.read()
 
         assert restored_content == "test_config=value\n"
+
+    def test_restore_dry_run_shows_text_diff_without_changing_home(self):
+        """A restore preview explains a pending replacement without applying it."""
+        with patch("sys.argv", ["mackup", "backup"]):
+            main()
+
+        with open(self.test_file_path, "w") as f:
+            f.write("test_config=local\n")
+
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["mackup", "--dry-run", "restore"]),
+            contextlib.redirect_stdout(output),
+        ):
+            main()
+
+        preview = output.getvalue()
+        assert f"MODIFY {self.test_file_path}" in preview
+        assert "-test_config=local" in preview
+        assert "+test_config=value" in preview
+        assert "Summary: 1 modify" in preview
+        with open(self.test_file_path) as f:
+            assert f.read() == "test_config=local\n"
+
+    def test_restore_dry_run_shows_files_deleted_by_directory_replacement(self):
+        """A restore preview exposes local-only files that restore will delete."""
+        folder_name = ".test-folder"
+        folder_path = os.path.join(self.test_home, folder_name)
+        os.makedirs(folder_path)
+        with open(os.path.join(folder_path, "managed.txt"), "w") as f:
+            f.write("managed\n")
+        with open(self.custom_app_config, "a") as f:
+            f.write(f"{folder_name}\n")
+
+        with patch("sys.argv", ["mackup", "backup"]):
+            main()
+
+        local_only_path = os.path.join(folder_path, "local-only.txt")
+        with open(local_only_path, "w") as f:
+            f.write("do not hide this deletion\n")
+
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["mackup", "--dry-run", "restore"]),
+            contextlib.redirect_stdout(output),
+        ):
+            main()
+
+        preview = output.getvalue()
+        assert f"MODIFY {folder_path}" in preview
+        assert f"DELETE {local_only_path}" in preview
+        assert "1 delete" in preview
+        assert os.path.exists(local_only_path)
+
+    def test_restore_dry_run_json_reports_machine_readable_changes(self):
+        """Automation can inspect the same restore plan without parsing prose."""
+        with patch("sys.argv", ["mackup", "backup"]):
+            main()
+        with open(self.test_file_path, "w") as f:
+            f.write("test_config=local\n")
+
+        output = io.StringIO()
+        argv = ["mackup", "--dry-run", "--json", "restore"]
+        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+            main()
+
+        document = json.loads(output.getvalue())
+        assert document["operation"] == "restore"
+        assert document["dry_run"] is True
+        assert document["summary"]["modify"] == 1
+        assert document["changes"][0]["application"] == self.test_app_name
+        assert document["changes"][0]["status"] == "modify"
+        assert document["changes"][0]["destination"] == self.test_file_path
+        assert "-test_config=local" in document["changes"][0]["diff"]
+
+    def test_restore_dry_run_json_identifies_binary_content(self):
+        """Binary replacements include sizes and hashes instead of an empty diff."""
+        backup_data = b"\x00backup-data"
+        current_data = b"\x00local-data"
+        with open(self.test_file_path, "wb") as f:
+            f.write(backup_data)
+        with patch("sys.argv", ["mackup", "backup"]):
+            main()
+        with open(self.test_file_path, "wb") as f:
+            f.write(current_data)
+
+        output = io.StringIO()
+        argv = ["mackup", "--dry-run", "--json", "restore"]
+        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+            main()
+
+        change = json.loads(output.getvalue())["changes"][0]
+        assert change["status"] == "modify"
+        assert change["binary"]["current"]["size"] == len(current_data)
+        assert change["binary"]["backup"]["size"] == len(backup_data)
+        expected_hash_length = 64
+        assert len(change["binary"]["current"]["sha256"]) == expected_hash_length
+        assert change["binary"]["current"]["sha256"] != (
+            change["binary"]["backup"]["sha256"]
+        )
+
+    def test_restore_dry_run_tracks_create_then_type_change(self):
+        """The plan follows a target from absent to an incompatible file type."""
+        with patch("sys.argv", ["mackup", "backup"]):
+            main()
+        os.remove(self.test_file_path)
+
+        output = io.StringIO()
+        argv = ["mackup", "--dry-run", "--json", "restore"]
+        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+            main()
+        assert json.loads(output.getvalue())["changes"][0]["status"] == "create"
+
+        os.mkdir(self.test_file_path)
+        output = io.StringIO()
+        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+            main()
+        assert (
+            json.loads(output.getvalue())["changes"][0]["status"] == "type-change"
+        )
+
+        os.rmdir(self.test_file_path)
+        backup_path = os.path.join(self.mackup_folder, self.test_file_name)
+        os.symlink(backup_path, self.test_file_path)
+        output = io.StringIO()
+        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+            main()
+        assert (
+            json.loads(output.getvalue())["changes"][0]["status"] == "type-change"
+        )
+
+    def test_restore_dry_run_json_blocks_when_destination_cannot_be_read(self):
+        """An unreadable target is a failed plan, not an unchanged target."""
+        with patch("sys.argv", ["mackup", "backup"]):
+            main()
+        os.chmod(self.test_file_path, 0)
+
+        output = io.StringIO()
+        argv = ["mackup", "--dry-run", "--json", "restore"]
+        try:
+            with (
+                patch("sys.argv", argv),
+                contextlib.redirect_stdout(output),
+                pytest.raises(SystemExit) as context,
+            ):
+                main()
+        finally:
+            os.chmod(self.test_file_path, 0o600)
+
+        assert context.value.code == 1
+        document = json.loads(output.getvalue())
+        assert document["summary"]["blocked"] == 1
+        assert document["changes"][0]["status"] == "blocked"
+        assert "Permission denied" in document["changes"][0]["error"]
 
     def test_backup_and_restore_full_workflow(self):
         """Test complete backup and restore workflow."""
@@ -324,6 +479,15 @@ class TestCLI(unittest.TestCase):
                 str(context.value)
                 == "Options --force and --force-no are mutually exclusive."
             )
+
+    def test_json_requires_restore_dry_run(self):
+        """JSON is rejected when no machine-readable restore plan exists."""
+        with (
+            patch("sys.argv", ["mackup", "--json", "restore"]),
+            pytest.raises(SystemExit) as context,
+        ):
+            main()
+        assert str(context.value) == "Option --json requires --dry-run restore."
 
     def test_backup_single_named_app(self):
         """mackup backup <app> backs up that application's files."""
