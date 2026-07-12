@@ -198,15 +198,6 @@ class Config:
                     f"The config file '{config_path}' does not exist. Aborting.",
                 )
 
-        try:
-            # Make sure the config file is in the home directory
-            config_path.relative_to(Path.home())
-        except ValueError:
-            error(
-                f"The config file '{config_path}' is not in your home "
-                "directory. Aborting.",
-            )
-
         # return the absolute path to the config file
         return str(config_path.absolute())
 
