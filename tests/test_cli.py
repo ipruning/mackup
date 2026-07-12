@@ -106,6 +106,36 @@ def test_json_requires_diff(monkeypatch) -> None:
     assert context.value.code == USAGE_ERROR
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (["list"], "test-app"),
+        (["show", "test-app"], "Name: test-app"),
+    ],
+)
+def test_metadata_inspection_commands_run_as_root(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    command: list[str],
+    expected: str,
+) -> None:
+    home, _reference, applications = _fixture(tmp_path, monkeypatch)
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        *command,
+    ]
+
+    with patch("sys.argv", argv), patch("mackup.mackup.os.geteuid", return_value=0):
+        main()
+
+    assert expected in capsys.readouterr().out
+
+
 def test_unknown_application_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
     home, _reference, applications = _fixture(tmp_path, monkeypatch)
     argv = [

@@ -152,10 +152,8 @@ def main() -> None:
     )
 
     if args["list"]:
-        ctx.mckp.check_for_usable_environment()
         _cmd_list(ctx.app_db)
     elif args["show"]:
-        ctx.mckp.check_for_usable_environment()
         _cmd_show(args, ctx.app_db)
     elif args["diff"]:
         _cmd_diff(args, ctx)
