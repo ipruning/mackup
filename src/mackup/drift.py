@@ -122,11 +122,32 @@ def _compare_links(application: str, reference: Path, live: Path) -> list[Drift]
     ]
 
 
+def _is_managed_live_link(
+    reference: Path,
+    live: Path,
+    reference_kind: FileKind | None,
+    live_kind: FileKind | None,
+) -> bool:
+    if reference_kind not in {FileKind.FILE, FileKind.DIRECTORY}:
+        return False
+    if live_kind is not FileKind.LINK:
+        return False
+    try:
+        return live.samefile(reference)
+    except FileNotFoundError:
+        return False
+
+
 def _compare_paths(application: str, reference: Path, live: Path) -> list[Drift]:
     """Compare one configured reference path with its live counterpart."""
     reference_kind = _path_kind(reference)
     live_kind = _path_kind(live)
-    if reference_kind is None and live_kind is None:
+    if (reference_kind is None and live_kind is None) or _is_managed_live_link(
+        reference,
+        live,
+        reference_kind,
+        live_kind,
+    ):
         return []
     if reference_kind is None:
         kind = DriftKind.ONLY_LIVE

@@ -116,3 +116,24 @@ def test_compare_paths_compares_symbolic_link_targets(tmp_path: Path) -> None:
     assert changes[0].kind == "modified"
     assert changes[0].reference_kind == "link"
     assert changes[0].live_kind == "link"
+
+
+def test_compare_paths_accepts_only_links_managed_by_the_reference(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference"
+    live = tmp_path / "live"
+    other = tmp_path / "other"
+    reference.write_text("same\n")
+    other.write_text("same\n")
+    live.symlink_to(reference)
+
+    assert compare_paths("example", reference, live) == []
+
+    live.unlink()
+    live.symlink_to(other)
+    changes = compare_paths("example", reference, live)
+
+    assert [change.kind for change in changes] == ["type-changed"]
+    assert changes[0].reference_kind == "file"
+    assert changes[0].live_kind == "link"
