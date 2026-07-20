@@ -1,6 +1,7 @@
 """Tests for the --config-file command line option."""
 import os
 import unittest
+from pathlib import Path
 
 import pytest
 
@@ -50,3 +51,23 @@ class TestConfigFileOption(unittest.TestCase):
         """Test that specifying a non-existent config file raises an error."""
         with pytest.raises(SystemExit):
             Config("nonexistent-config-file.cfg")
+
+
+def test_explicit_config_file_can_be_outside_home(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    storage = tmp_path / "storage"
+    config_path = tmp_path / "runtime" / "mackup.cfg"
+    home.mkdir()
+    config_path.parent.mkdir()
+    config_path.write_text(
+        "[storage]\nengine = file_system\n"
+        f"path = {storage}\ndirectory = reference\n",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    config = Config(str(config_path))
+
+    assert config.path == str(storage)

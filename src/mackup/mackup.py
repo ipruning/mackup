@@ -61,6 +61,17 @@ class Mackup:
                 " storage directory synced first.",
             )
 
+    def check_for_usable_inspection_env(self) -> None:
+        """Check reference storage without applying mutation-only root policy."""
+        if not os.path.isdir(self._config.path):
+            utils.error(
+                f"Unable to find the storage folder: {self._config.path}",
+            )
+        if not os.path.isdir(self.mackup_folder):
+            utils.error(
+                f"Unable to find the Mackup folder: {self.mackup_folder}",
+            )
+
     def create_mackup_home(self) -> None:
         """If the Mackup home folder does not exist, create it."""
         if not os.path.isdir(self.mackup_folder):
@@ -73,7 +84,10 @@ class Mackup:
             else:
                 utils.error("Mackup can't do anything without a home =(")
 
-    def get_apps_to_backup(self) -> set[str]:
+    def get_apps_to_backup(
+        self,
+        app_db: appsdb.ApplicationsDatabase | None = None,
+    ) -> set[str]:
         """
         Get the list of applications that should be backed up by Mackup.
 
@@ -82,12 +96,14 @@ class Mackup:
         Returns:
             (set) List of application names to back up
         """
-        # Instantiate the app db
-        app_db: appsdb.ApplicationsDatabase = appsdb.ApplicationsDatabase()
+        # Use the caller's database when it includes custom application files.
+        active_app_db = app_db or appsdb.ApplicationsDatabase()
 
         # If a list of apps to sync is specify, we only allow those
         # Or we allow every supported app by default
-        apps_to_backup: set[str] = self._config.apps_to_sync or app_db.get_app_names()
+        apps_to_backup: set[str] = (
+            self._config.apps_to_sync or active_app_db.get_app_names()
+        )
 
         # Remove the specified apps to ignore
         for app_name in self._config.apps_to_ignore:

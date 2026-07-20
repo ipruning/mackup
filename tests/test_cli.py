@@ -2,602 +2,219 @@ import contextlib
 import io
 import json
 import os
-import shutil
-import tempfile
-import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from mackup import utils
-from mackup.main import main
-
-
-class TestCLI(unittest.TestCase):
-    """Test suite for CLI commands: backup, restore, and copy mode workflows."""
-
-    def setUp(self):
-        """Set up test environment before each test."""
-        # Create temporary directories for testing
-        self.test_home = tempfile.mkdtemp(prefix="mackup_test_home_")
-        self.test_storage = tempfile.mkdtemp(prefix="mackup_test_storage_")
-        self.mackup_folder = os.path.join(self.test_storage, "Mackup")
-
-        # Store original HOME
-        self.original_home = os.environ.get("HOME")
-        self.original_xdg = os.environ.get("XDG_CONFIG_HOME")
-
-        # Set HOME to our test directory
-        os.environ["HOME"] = self.test_home
-        os.environ["XDG_CONFIG_HOME"] = os.path.join(self.test_home, ".config")
-
-        # Create test config file
-        self.config_path = os.path.join(self.test_home, ".mackup.cfg")
-        with open(self.config_path, "w") as f:
-            f.write("[storage]\n")
-            f.write("engine = file_system\n")
-            f.write(f"path = {self.test_storage}\n")
-            f.write("directory = Mackup\n")
-            f.write("\n")
-            f.write("[applications_to_sync]\n")
-            f.write("test-app\n")
-
-        # Create a test application config in the apps database
-        self.test_app_name = "test-app"
-        self.test_file_name = ".testrc"
-        self.test_file_path = os.path.join(self.test_home, self.test_file_name)
-
-        # Create test file with content
-        with open(self.test_file_path, "w") as f:
-            f.write("test_config=value\n")
-
-        # Create custom application config
-        self.custom_apps_dir = os.path.join(self.test_home, ".mackup")
-        os.makedirs(self.custom_apps_dir, exist_ok=True)
-
-        self.custom_app_config = os.path.join(self.custom_apps_dir, "test-app.cfg")
-        with open(self.custom_app_config, "w") as f:
-            f.write("[application]\n")
-            f.write(f"name = {self.test_app_name}\n")
-            f.write("\n")
-            f.write("[configuration_files]\n")
-            f.write(f"{self.test_file_name}\n")
-
-        # Force yes to all prompts
-        utils.FORCE_YES = True
-        utils.FORCE_NO = False
-        utils.CAN_RUN_AS_ROOT = False
-
-    def tearDown(self):
-        """Clean up test environment after each test."""
-        # Restore original HOME
-        if self.original_home:
-            os.environ["HOME"] = self.original_home
-        else:
-            os.environ.pop("HOME", None)
-
-        # Restore original XDG_CONFIG_HOME
-        if self.original_xdg:
-            os.environ["XDG_CONFIG_HOME"] = self.original_xdg
-        else:
-            os.environ.pop("XDG_CONFIG_HOME", None)
-
-        # Clean up temporary directories
-        if os.path.exists(self.test_home):
-            shutil.rmtree(self.test_home)
-        if os.path.exists(self.test_storage):
-            shutil.rmtree(self.test_storage)
-
-        # Reset utils flags
-        utils.FORCE_YES = False
-        utils.FORCE_NO = False
-        utils.CAN_RUN_AS_ROOT = False
-
-    def test_backup_creates_mackup_folder(self):
-        """Test that mackup backup creates the Mackup folder if it doesn't exist."""
-        # Ensure Mackup folder doesn't exist
-        assert not os.path.exists(self.mackup_folder)
-
-        # Mock sys.argv to simulate 'mackup backup'
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        # Check that Mackup folder was created
-        assert os.path.exists(self.mackup_folder)
-
-    def test_backup_copies_file(self):
-        """Test that mackup backup successfully copies a file to the backup location."""
-        # Ensure test file exists
-        assert os.path.exists(self.test_file_path)
-
-        # Run backup
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        # Check that file was copied to Mackup folder
-        backed_up_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert os.path.exists(backed_up_file)
-
-        # Verify content is the same
-        with open(self.test_file_path) as f:
-            original_content = f.read()
-        with open(backed_up_file) as f:
-            backed_up_content = f.read()
-
-        assert original_content == backed_up_content
-
-    def test_restore_copies_file_back(self):
-        """Test that mackup restore successfully copies a file back from backup."""
-        # First, create a backup
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        # Verify backup exists
-        backed_up_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert os.path.exists(backed_up_file)
-
-        # Remove original file
-        os.remove(self.test_file_path)
-        assert not os.path.exists(self.test_file_path)
-
-        # Run restore
-        with patch("sys.argv", ["mackup", "restore"]):
-            main()
-
-        # Check that file was restored
-        assert os.path.exists(self.test_file_path)
-
-        # Verify content is correct
-        with open(self.test_file_path) as f:
-            restored_content = f.read()
-
-        assert restored_content == "test_config=value\n"
-
-    def test_restore_dry_run_shows_text_diff_without_changing_home(self):
-        """A restore preview explains a pending replacement without applying it."""
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        with open(self.test_file_path, "w") as f:
-            f.write("test_config=local\n")
-
-        output = io.StringIO()
-        with (
-            patch("sys.argv", ["mackup", "--dry-run", "restore"]),
-            contextlib.redirect_stdout(output),
-        ):
-            main()
-
-        preview = output.getvalue()
-        assert f"MODIFY {self.test_file_path}" in preview
-        assert "-test_config=local" in preview
-        assert "+test_config=value" in preview
-        assert "Summary: 1 modify" in preview
-        with open(self.test_file_path) as f:
-            assert f.read() == "test_config=local\n"
-
-    def test_restore_dry_run_shows_files_deleted_by_directory_replacement(self):
-        """A restore preview exposes local-only files that restore will delete."""
-        folder_name = ".test-folder"
-        folder_path = os.path.join(self.test_home, folder_name)
-        os.makedirs(folder_path)
-        with open(os.path.join(folder_path, "managed.txt"), "w") as f:
-            f.write("managed\n")
-        with open(self.custom_app_config, "a") as f:
-            f.write(f"{folder_name}\n")
-
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        local_only_path = os.path.join(folder_path, "local-only.txt")
-        with open(local_only_path, "w") as f:
-            f.write("do not hide this deletion\n")
-
-        output = io.StringIO()
-        with (
-            patch("sys.argv", ["mackup", "--dry-run", "restore"]),
-            contextlib.redirect_stdout(output),
-        ):
-            main()
-
-        preview = output.getvalue()
-        assert f"MODIFY {folder_path}" in preview
-        assert f"DELETE {local_only_path}" in preview
-        assert "1 delete" in preview
-        assert os.path.exists(local_only_path)
-
-    def test_restore_dry_run_json_reports_machine_readable_changes(self):
-        """Automation can inspect the same restore plan without parsing prose."""
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-        with open(self.test_file_path, "w") as f:
-            f.write("test_config=local\n")
-
-        output = io.StringIO()
-        argv = ["mackup", "--dry-run", "--json", "restore"]
-        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
-            main()
-
-        document = json.loads(output.getvalue())
-        assert document["operation"] == "restore"
-        assert document["dry_run"] is True
-        assert document["summary"]["modify"] == 1
-        assert document["changes"][0]["application"] == self.test_app_name
-        assert document["changes"][0]["status"] == "modify"
-        assert document["changes"][0]["destination"] == self.test_file_path
-        assert "-test_config=local" in document["changes"][0]["diff"]
-
-    def test_restore_dry_run_json_identifies_binary_content(self):
-        """Binary replacements include sizes and hashes instead of an empty diff."""
-        backup_data = b"\x00backup-data"
-        current_data = b"\x00local-data"
-        with open(self.test_file_path, "wb") as f:
-            f.write(backup_data)
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-        with open(self.test_file_path, "wb") as f:
-            f.write(current_data)
-
-        output = io.StringIO()
-        argv = ["mackup", "--dry-run", "--json", "restore"]
-        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
-            main()
-
-        change = json.loads(output.getvalue())["changes"][0]
-        assert change["status"] == "modify"
-        assert change["binary"]["current"]["size"] == len(current_data)
-        assert change["binary"]["backup"]["size"] == len(backup_data)
-        expected_hash_length = 64
-        assert len(change["binary"]["current"]["sha256"]) == expected_hash_length
-        assert change["binary"]["current"]["sha256"] != (
-            change["binary"]["backup"]["sha256"]
-        )
-
-    def test_restore_dry_run_tracks_create_then_type_change(self):
-        """The plan follows a target from absent to an incompatible file type."""
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-        os.remove(self.test_file_path)
-
-        output = io.StringIO()
-        argv = ["mackup", "--dry-run", "--json", "restore"]
-        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
-            main()
-        assert json.loads(output.getvalue())["changes"][0]["status"] == "create"
-
-        os.mkdir(self.test_file_path)
-        output = io.StringIO()
-        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
-            main()
-        assert (
-            json.loads(output.getvalue())["changes"][0]["status"] == "type-change"
-        )
-
-        os.rmdir(self.test_file_path)
-        backup_path = os.path.join(self.mackup_folder, self.test_file_name)
-        os.symlink(backup_path, self.test_file_path)
-        output = io.StringIO()
-        with patch("sys.argv", argv), contextlib.redirect_stdout(output):
-            main()
-        assert (
-            json.loads(output.getvalue())["changes"][0]["status"] == "type-change"
-        )
-
-    def test_restore_dry_run_json_blocks_when_destination_cannot_be_read(self):
-        """An unreadable target is a failed plan, not an unchanged target."""
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-        os.chmod(self.test_file_path, 0)
-
-        output = io.StringIO()
-        argv = ["mackup", "--dry-run", "--json", "restore"]
-        try:
-            with (
-                patch("sys.argv", argv),
-                contextlib.redirect_stdout(output),
-                pytest.raises(SystemExit) as context,
-            ):
-                main()
-        finally:
-            os.chmod(self.test_file_path, 0o600)
-
-        assert context.value.code == 1
-        document = json.loads(output.getvalue())
-        assert document["summary"]["blocked"] == 1
-        assert document["changes"][0]["status"] == "blocked"
-        assert "Permission denied" in document["changes"][0]["error"]
-
-    def test_backup_and_restore_full_workflow(self):
-        """Test complete backup and restore workflow."""
-        original_content = "test_config=value\n"
-
-        # Verify original file exists and has correct content
-        assert os.path.exists(self.test_file_path)
-        with open(self.test_file_path) as f:
-            assert f.read() == original_content
-
-        # Step 1: Backup
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        # Verify backup was created
-        backed_up_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert os.path.exists(backed_up_file)
-
-        # Step 2: Modify original file
-        modified_content = "test_config=modified\n"
-        with open(self.test_file_path, "w") as f:
-            f.write(modified_content)
-
-        # Verify file was modified
-        with open(self.test_file_path) as f:
-            assert f.read() == modified_content
-
-        # Step 3: Restore (should replace modified file with backup)
-        with patch("sys.argv", ["mackup", "restore"]):
-            main()
-
-        # Verify file was restored to original content
-        with open(self.test_file_path) as f:
-            assert f.read() == original_content
-
-    def test_backup_preserves_file_permissions(self):
-        """Test that mackup backup preserves file permissions."""
-        # Set specific permissions on test file
-        os.chmod(self.test_file_path, 0o600)
-
-        # Run backup
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        # Check backup file permissions
-        backed_up_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert os.path.exists(backed_up_file)
-
-        # Verify permissions are preserved (mackup sets to 0600 by default)
-        backed_up_stat = os.stat(backed_up_file)
-        expected_mode = 0o600
-        assert backed_up_stat.st_mode & 0o777 == expected_mode
-
-    def test_restore_with_missing_backup(self):
-        """Test that mackup restore handles missing backup files gracefully."""
-        # Ensure no backup exists
-        assert not os.path.exists(self.mackup_folder)
-
-        # Create the mackup folder but don't add any files
-        os.makedirs(self.mackup_folder, exist_ok=True)
-
-        # Run restore (should not crash even though no backup exists)
-        with patch("sys.argv", ["mackup", "restore"]):
-            try:
-                main()
-                # If no exception is raised, the test passes
-                # (restore should gracefully handle missing files)
-            except Exception as e:
-                self.fail(f"Restore raised an exception with missing backup: {e}")
-
-    def test_backup_with_folder(self):
-        """Test that mackup backup works with folders, not just files."""
-        # Create a test folder with a file inside
-        test_folder_name = ".test_folder"
-        test_folder_path = os.path.join(self.test_home, test_folder_name)
-        os.makedirs(test_folder_path, exist_ok=True)
-
-        test_file_in_folder = os.path.join(test_folder_path, "config.txt")
-        with open(test_file_in_folder, "w") as f:
-            f.write("folder_config=value\n")
-
-        # Update custom app config to include the folder
-        with open(self.custom_app_config, "w") as f:
-            f.write("[application]\n")
-            f.write(f"name = {self.test_app_name}\n")
-            f.write("\n")
-            f.write("[configuration_files]\n")
-            f.write(f"{self.test_file_name}\n")
-            f.write(f"{test_folder_name}\n")
-
-        # Run backup
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        # Check that folder was copied
-        backed_up_folder = os.path.join(self.mackup_folder, test_folder_name)
-        assert os.path.exists(backed_up_folder)
-        assert os.path.isdir(backed_up_folder)
-
-        # Check that file inside folder was copied
-        backed_up_file_in_folder = os.path.join(backed_up_folder, "config.txt")
-        assert os.path.exists(backed_up_file_in_folder)
-
-        # Verify content
-        with open(backed_up_file_in_folder) as f:
-            assert f.read() == "folder_config=value\n"
-
-    def test_restore_with_folder(self):
-        """Test that mackup restore works with folders."""
-        # Create a test folder with a file inside
-        test_folder_name = ".test_folder"
-        test_folder_path = os.path.join(self.test_home, test_folder_name)
-        os.makedirs(test_folder_path, exist_ok=True)
-
-        test_file_in_folder = os.path.join(test_folder_path, "config.txt")
-        with open(test_file_in_folder, "w") as f:
-            f.write("folder_config=value\n")
-
-        # Update custom app config to include the folder
-        with open(self.custom_app_config, "w") as f:
-            f.write("[application]\n")
-            f.write(f"name = {self.test_app_name}\n")
-            f.write("\n")
-            f.write("[configuration_files]\n")
-            f.write(f"{self.test_file_name}\n")
-            f.write(f"{test_folder_name}\n")
-
-        # Run backup first
-        with patch("sys.argv", ["mackup", "backup"]):
-            main()
-
-        # Delete the folder
-        shutil.rmtree(test_folder_path)
-        assert not os.path.exists(test_folder_path)
-
-        # Run restore
-        with patch("sys.argv", ["mackup", "restore"]):
-            main()
-
-        # Check that folder was restored
-        assert os.path.exists(test_folder_path)
-        assert os.path.isdir(test_folder_path)
-
-        # Check that file inside folder was restored
-        assert os.path.exists(test_file_in_folder)
-
-        # Verify content
-        with open(test_file_in_folder) as f:
-            assert f.read() == "folder_config=value\n"
-
-    def test_restore_fails_when_mackup_folder_missing(self):
-        """Test that mackup restore fails when Mackup folder doesn't exist."""
-        # Ensure Mackup folder doesn't exist
-        assert not os.path.exists(self.mackup_folder)
-
-        # Run restore - should exit with error when backup folder is missing
-        with patch("sys.argv", ["mackup", "restore"]):
-            with pytest.raises(SystemExit) as context:
-                main()
-
-            # Should exit with non-zero status
-            assert context.value.code != 0
-
-    def test_force_and_force_no_are_mutually_exclusive(self):
-        """Passing --force and --force-no together should fail fast."""
-        with patch("sys.argv", ["mackup", "--force", "--force-no", "backup"]):
-            with pytest.raises(SystemExit) as context:
-                main()
-
-            assert (
-                str(context.value)
-                == "Options --force and --force-no are mutually exclusive."
-            )
-
-    def test_json_requires_restore_dry_run(self):
-        """JSON is rejected when no machine-readable restore plan exists."""
-        with (
-            patch("sys.argv", ["mackup", "--json", "restore"]),
-            pytest.raises(SystemExit) as context,
-        ):
-            main()
-        assert str(context.value) == "Option --json requires --dry-run restore."
-
-    def test_backup_single_named_app(self):
-        """mackup backup <app> backs up that application's files."""
-        with patch("sys.argv", ["mackup", "backup", "test-app"]):
-            main()
-
-        backed_up_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert os.path.exists(backed_up_file)
-        with open(backed_up_file) as f:
-            assert f.read() == "test_config=value\n"
-
-    def test_backup_unsupported_app_exits_with_error(self):
-        """mackup backup <unknown> exits with an error and backs nothing up."""
-        with patch("sys.argv", ["mackup", "backup", "definitely-not-an-app"]):
-            with pytest.raises(SystemExit) as context:
-                main()
-            assert "Unsupported application" in str(context.value)
-
-        # The unknown name must fail before the env check creates the folder.
-        assert not os.path.exists(self.mackup_folder)
-        backed_up_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert not os.path.exists(backed_up_file)
-
-    def test_backup_named_app_overrides_config(self):
-        """Naming an app overrides the config's sync/ignore selection."""
-        # A second, supported application that is NOT in [applications_to_sync].
-        second_file_name = ".testrc2"
-        second_file_path = os.path.join(self.test_home, second_file_name)
-        with open(second_file_path, "w") as f:
-            f.write("second=value\n")
-
-        second_app_config = os.path.join(self.custom_apps_dir, "test-app-2.cfg")
-        with open(second_app_config, "w") as f:
-            f.write("[application]\n")
-            f.write("name = test-app-2\n")
-            f.write("\n")
-            f.write("[configuration_files]\n")
-            f.write(f"{second_file_name}\n")
-
-        # Even though test-app-2 is not in [applications_to_sync], naming it
-        # explicitly backs it up.
-        with patch("sys.argv", ["mackup", "backup", "test-app-2"]):
-            main()
-
-        assert os.path.exists(os.path.join(self.mackup_folder, second_file_name))
-
-    def test_link_uninstall_single_app_skips_global_teardown(self):
-        """Scoped link uninstall unlinks one app without the global teardown."""
-        # Put the app under link management first.
-        with patch("sys.argv", ["mackup", "link", "install"]):
-            main()
-        assert os.path.islink(self.test_file_path)
-
-        # Uninstall just this app.
-        buffer = io.StringIO()
-        with patch("sys.argv", ["mackup", "link", "uninstall", "test-app"]):
-            with contextlib.redirect_stdout(buffer):
-                main()
-            # The global "all done" message must not appear for a scoped run.
-            assert "Thanks for using Mackup!" not in buffer.getvalue()
-
-        # The file is back in place as a regular file, not a symlink.
-        assert os.path.exists(self.test_file_path)
-        assert not os.path.islink(self.test_file_path)
-
-    def test_restore_single_named_app(self):
-        """mackup restore <app> restores that application's files."""
-        # Back up first, then remove the home file.
-        with patch("sys.argv", ["mackup", "backup", "test-app"]):
-            main()
-        assert os.path.exists(os.path.join(self.mackup_folder, self.test_file_name))
-        os.remove(self.test_file_path)
-        assert not os.path.exists(self.test_file_path)
-
-        # Scoped restore.
-        with patch("sys.argv", ["mackup", "restore", "test-app"]):
-            main()
-
-        assert os.path.exists(self.test_file_path)
-        with open(self.test_file_path) as f:
-            assert f.read() == "test_config=value\n"
-
-    def test_link_install_single_named_app(self):
-        """mackup link install <app> links that application's files."""
-        with patch("sys.argv", ["mackup", "link", "install", "test-app"]):
-            main()
-
-        # The home file is now a symlink into the Mackup folder.
-        mackup_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert os.path.islink(self.test_file_path)
-        assert os.path.exists(mackup_file)
-        assert os.path.samefile(self.test_file_path, mackup_file)
-
-    def test_link_single_named_app(self):
-        """mackup link <app> links that application's files from the storage."""
-        # Put the file in the Mackup folder, then simulate a fresh home.
-        with patch("sys.argv", ["mackup", "backup", "test-app"]):
-            main()
-        os.remove(self.test_file_path)
-        assert not os.path.exists(self.test_file_path)
-
-        # Scoped link.
-        with patch("sys.argv", ["mackup", "link", "test-app"]):
-            main()
-
-        # The home file is now a symlink into the Mackup folder.
-        mackup_file = os.path.join(self.mackup_folder, self.test_file_name)
-        assert os.path.islink(self.test_file_path)
-        assert os.path.samefile(self.test_file_path, mackup_file)
-
-
-if __name__ == "__main__":
-    unittest.main()
+from mackup.main import USAGE_ERROR, main
+
+
+def _fixture(tmp_path: Path, monkeypatch) -> tuple[Path, Path, Path]:
+    home = tmp_path / "home"
+    storage = tmp_path / "storage"
+    reference = storage / "reference"
+    applications = tmp_path / "applications"
+    home.mkdir()
+    reference.mkdir(parents=True)
+    applications.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    config_path = home / ".mackup.cfg"
+    config_path.write_text(
+        "[storage]\n"
+        "engine = file_system\n"
+        f"path = {storage}\n"
+        "directory = reference\n",
+    )
+    (applications / "test-app.cfg").write_text(
+        "[application]\nname = test-app\n[configuration_files]\n.testrc\n",
+    )
+    return home, reference, applications
+
+
+def test_diff_reports_location_only_json_without_mutating_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home, reference, applications = _fixture(tmp_path, monkeypatch)
+    live_file = home / ".testrc"
+    reference_file = reference / ".testrc"
+    live_file.write_text("token=live-secret\n")
+    reference_file.write_text("token=reference-secret\n")
+    output = io.StringIO()
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        "--json",
+        "diff",
+    ]
+
+    with (
+        patch("sys.argv", argv),
+        patch("mackup.mackup.os.geteuid", return_value=0),
+        contextlib.redirect_stdout(output),
+    ):
+        main()
+
+    document = json.loads(output.getvalue())
+    assert document["schema_version"] == 1
+    assert document["operation"] == "diff"
+    test_app_changes = [
+        change for change in document["changes"] if change["application"] == "test-app"
+    ]
+    assert [change["kind"] for change in test_app_changes] == ["modified"]
+    assert "live-secret" not in output.getvalue()
+    assert "reference-secret" not in output.getvalue()
+    assert live_file.read_text() == "token=live-secret\n"
+    assert reference_file.read_text() == "token=reference-secret\n"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["backup"],
+        ["restore"],
+        ["link"],
+        ["link", "install"],
+        ["link", "uninstall"],
+    ],
+)
+def test_mutation_is_not_a_public_command(
+    monkeypatch,
+    command: list[str],
+) -> None:
+    monkeypatch.setenv("HOME", os.fspath(Path.home()))
+    with (
+        patch("sys.argv", ["mackup", *command]),
+        pytest.raises(SystemExit) as context,
+    ):
+        main()
+    assert context.value.code == USAGE_ERROR
+
+
+def test_json_requires_diff(monkeypatch) -> None:
+    monkeypatch.setenv("HOME", os.fspath(Path.home()))
+    with (
+        patch("sys.argv", ["mackup", "--json", "list"]),
+        pytest.raises(SystemExit) as context,
+    ):
+        main()
+    assert context.value.code == USAGE_ERROR
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (["list"], "test-app"),
+        (["show", "test-app"], "Name: test-app"),
+    ],
+)
+def test_metadata_inspection_commands_run_as_root(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    command: list[str],
+    expected: str,
+) -> None:
+    home, _reference, applications = _fixture(tmp_path, monkeypatch)
+    (home / ".mackup.cfg").unlink()
+    argv = [
+        "mackup",
+        "--applications-dir",
+        str(applications),
+        *command,
+    ]
+
+    with patch("sys.argv", argv), patch("mackup.mackup.os.geteuid", return_value=0):
+        main()
+
+    assert expected in capsys.readouterr().out
+
+
+def test_unknown_application_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    home, _reference, applications = _fixture(tmp_path, monkeypatch)
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        "diff",
+        "unknown",
+    ]
+    with patch("sys.argv", argv), pytest.raises(SystemExit) as context:
+        main()
+    assert context.value.code == USAGE_ERROR
+
+
+def test_explicit_applications_directory_must_exist(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home, _reference, applications = _fixture(tmp_path, monkeypatch)
+    applications.joinpath("test-app.cfg").unlink()
+    applications.rmdir()
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        "diff",
+    ]
+
+    with patch("sys.argv", argv), pytest.raises(SystemExit) as context:
+        main()
+
+    assert context.value.code == USAGE_ERROR
+    assert capsys.readouterr().err == (
+        f"Applications directory is not a directory: {applications}\n"
+    )
+
+
+def test_unreadable_path_is_json_error_and_exit_one(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home, reference, applications = _fixture(tmp_path, monkeypatch)
+    live_file = home / ".testrc"
+    reference_file = reference / ".testrc"
+    live_file.write_text("live\n")
+    reference_file.write_text("reference\n")
+    original_lstat = Path.lstat
+
+    def deny_live(file_path: Path) -> os.stat_result:
+        if file_path == live_file:
+            raise PermissionError(13, "Permission denied", str(file_path))
+        return original_lstat(file_path)
+
+    output = io.StringIO()
+    argv = [
+        "mackup",
+        "--config-file",
+        str(home / ".mackup.cfg"),
+        "--applications-dir",
+        str(applications),
+        "--json",
+        "diff",
+    ]
+    with (
+        patch("sys.argv", argv),
+        patch.object(Path, "lstat", deny_live),
+        contextlib.redirect_stdout(output),
+        pytest.raises(SystemExit) as context,
+    ):
+        main()
+
+    document = json.loads(output.getvalue())
+    assert context.value.code == 1
+    test_app_changes = [
+        change for change in document["changes"] if change["application"] == "test-app"
+    ]
+    assert test_app_changes[0]["kind"] == "unreadable"
+    assert test_app_changes[0]["error"] == f"Permission denied: {live_file}"
